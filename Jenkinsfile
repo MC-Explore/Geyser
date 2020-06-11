@@ -10,8 +10,8 @@ pipeline {
     stages {
         stage ('Build') {
             steps {
-                run 'git submodule update --init --recursive'
-                run 'mvn clean package'
+                sh 'git submodule update --init --recursive'
+                sh 'mvn clean package'
             }
             post {
                 success {
@@ -25,7 +25,7 @@ pipeline {
                 branch "master"
             }
             steps {
-                run 'mvn javadoc:jar source:jar deploy -DskipTests'
+                sh 'mvn javadoc:jar source:jar deploy -DskipTests'
             }
         }
     }
