@@ -25,7 +25,7 @@ pipeline {
                 branch "master"
             }
             steps {
-                sh 'mvn javadoc:jar source:jar deploy -DskipTests'
+                sh 'mvn javadoc:jar source:jar deploy -DskipTests -e'
             }
         }
     }
