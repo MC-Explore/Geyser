@@ -25,7 +25,7 @@ pipeline {
                 branch "master"
             }
             steps {
-                sh 'mvn javadoc:jar source:jar deploy -DskipTests'
+                sh 'echo Skipping'
             }
         }
     }
@@ -33,7 +33,6 @@ pipeline {
     post {
         always {
             deleteDir()
-
         }
     }
 }
