@@ -39,6 +39,10 @@ import java.io.*;
 import java.net.URL;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.FileTime;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Map;
@@ -53,8 +57,8 @@ public class SkinProvider {
     public static final Skin EMPTY_SKIN = new Skin(-1, "steve", STEVE_SKIN);
     public static final byte[] ALEX_SKIN = new ProvidedSkin("bedrock/skin/skin_alex.png").getSkin();
     public static final Skin EMPTY_SKIN_ALEX = new Skin(-1, "alex", ALEX_SKIN);
-    private static Map<UUID, Skin> cachedSkins = new ConcurrentHashMap<>();
-    private static Map<UUID, CompletableFuture<Skin>> requestedSkins = new ConcurrentHashMap<>();
+    private static Map<String, Skin> cachedSkins = new ConcurrentHashMap<>();
+    private static Map<String, CompletableFuture<Skin>> requestedSkins = new ConcurrentHashMap<>();
 
     public static final Cape EMPTY_CAPE = new Cape("", "no-cape", new byte[0], -1, true);
     private static Map<String, Cape> cachedCapes = new ConcurrentHashMap<>();
@@ -68,7 +72,7 @@ public class SkinProvider {
     public static String EARS_GEOMETRY_SLIM;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
-    private static final int CACHE_INTERVAL = 8 * 60 * 1000; // 8 minutes
+    private static final int CACHE_INTERVAL = 30 * 60 * 1000; // 30 minutes
 
     static {
         /* Load in the normal ears geometry */
@@ -103,16 +107,12 @@ public class SkinProvider {
         EARS_GEOMETRY_SLIM = earsDataBuilder.toString();
     }
 
-    public static boolean hasSkinCached(UUID uuid) {
-        return cachedSkins.containsKey(uuid);
-    }
-
     public static boolean hasCapeCached(String capeUrl) {
         return cachedCapes.containsKey(capeUrl);
     }
 
-    public static Skin getCachedSkin(UUID uuid) {
-        return cachedSkins.getOrDefault(uuid, EMPTY_SKIN);
+    public static Skin getCachedSkin(String skinUrl) {
+        return cachedSkins.getOrDefault(skinUrl, EMPTY_SKIN);
     }
 
     public static Cape getCachedCape(String capeUrl) {
@@ -136,28 +136,28 @@ public class SkinProvider {
 
     public static CompletableFuture<Skin> requestSkin(UUID playerId, String textureUrl, boolean newThread) {
         if (textureUrl == null || textureUrl.isEmpty()) return CompletableFuture.completedFuture(EMPTY_SKIN);
-        if (requestedSkins.containsKey(playerId)) return requestedSkins.get(playerId); // already requested
+        if (requestedSkins.containsKey(textureUrl)) return requestedSkins.get(textureUrl); // already requested
 
-        if ((System.currentTimeMillis() - CACHE_INTERVAL) < cachedSkins.getOrDefault(playerId, EMPTY_SKIN).getRequestedOn()) {
+        if ((System.currentTimeMillis() - CACHE_INTERVAL) < cachedSkins.getOrDefault(textureUrl, EMPTY_SKIN).getRequestedOn()) {
             // no need to update, still cached
-            return CompletableFuture.completedFuture(cachedSkins.get(playerId));
+            return CompletableFuture.completedFuture(cachedSkins.get(textureUrl));
         }
 
         CompletableFuture<Skin> future;
         if (newThread) {
             future = CompletableFuture.supplyAsync(() -> supplySkin(playerId, textureUrl), EXECUTOR_SERVICE)
                     .whenCompleteAsync((skin, throwable) -> {
-                        if (!cachedSkins.getOrDefault(playerId, EMPTY_SKIN).getTextureUrl().equals(textureUrl)) {
+                        if (!cachedSkins.getOrDefault(textureUrl, EMPTY_SKIN).getTextureUrl().equals(textureUrl)) {
                             skin.updated = true;
-                            cachedSkins.put(playerId, skin);
+                            cachedSkins.put(textureUrl, skin);
                         }
-                        requestedSkins.remove(skin.getSkinOwner());
+                        requestedSkins.remove(textureUrl);
                     });
-            requestedSkins.put(playerId, future);
+            requestedSkins.put(textureUrl, future);
         } else {
             Skin skin = supplySkin(playerId, textureUrl);
             future = CompletableFuture.completedFuture(skin);
-            cachedSkins.put(playerId, skin);
+            cachedSkins.put(textureUrl, skin);
         }
         return future;
     }
@@ -255,7 +255,7 @@ public class SkinProvider {
 
     public static void storeBedrockSkin(UUID playerID, String skinID, byte[] skinData) {
         Skin skin = new Skin(playerID, skinID, skinData, System.currentTimeMillis(), true, false);
-        cachedSkins.put(playerID, skin);
+        cachedSkins.put(skin.getTextureUrl(), skin);
     }
 
     public static void storeBedrockCape(UUID playerID, byte[] capeData) {
@@ -275,7 +275,7 @@ public class SkinProvider {
      * @param skin The skin to cache
      */
     public static void storeEarSkin(UUID playerID, Skin skin) {
-        cachedSkins.put(playerID, skin);
+        cachedSkins.put(skin.getTextureUrl(), skin);
     }
 
     /**
@@ -289,11 +289,33 @@ public class SkinProvider {
     }
 
     private static Skin supplySkin(UUID uuid, String textureUrl) {
-        byte[] skin = EMPTY_SKIN.getSkinData();
+        // First see if we have a cached file
+        Path skinFile = Paths.get("cache", "skins", Base64.getEncoder().encodeToString(textureUrl.getBytes()));
         try {
-            skin = requestImage(textureUrl, null);
+            Files.setLastModifiedTime(skinFile, FileTime.fromMillis(System.currentTimeMillis()));
+            GeyserConnector.getInstance().getLogger().debug("Reading cached skin from file " + skinFile.toString() + " for " + textureUrl);
+            return new Skin(uuid, textureUrl, Files.readAllBytes(skinFile), System.currentTimeMillis(), false, false);
+        } catch (IOException ignored) {}
+
+        try {
+            byte[] skin = requestImage(textureUrl, null);
+
+            // Write cache if we are allowed
+            if (GeyserConnector.getInstance().getConfig().getCacheSkins() > 0) {
+                //noinspection ResultOfMethodCallIgnored
+                skinFile.getParent().toFile().mkdirs();
+                try {
+                    Files.write(skinFile, skin);
+                    GeyserConnector.getInstance().getLogger().debug("Writing cached skin to file " + skinFile.toString() + " for " + textureUrl);
+                } catch (IOException e) {
+                    GeyserConnector.getInstance().getLogger().error("Failed to write cached skin to file " + skinFile.toString() + " for " + textureUrl);
+                }
+            }
+
+            return new Skin(uuid, textureUrl, skin, System.currentTimeMillis(), false, false);
         } catch (Exception ignored) {} // just ignore I guess
-        return new Skin(uuid, textureUrl, skin, System.currentTimeMillis(), false, false);
+
+        return new Skin(uuid, "empty", EMPTY_SKIN.getSkinData(), System.currentTimeMillis(), false, false);
     }
 
     private static Cape supplyCape(String capeUrl, CapeProvider provider) {
