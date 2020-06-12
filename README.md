@@ -49,7 +49,7 @@ Take a look [here](https://github.com/GeyserMC/Geyser/wiki#Setup) for how to set
 ## Contributing
 Any contributions are appreciated. Please feel free to reach out to us on [Discord](http://discord.geysermc.org/) if
 you're interested in helping out with Geyser.
-
+.
 ## Libraries Used:
 - [NukkitX Bedrock Protocol Library](https://github.com/NukkitX/Protocol)
 - [Steveice10's Java Protocol Library](https://github.com/Steveice10/MCProtocolLib)
