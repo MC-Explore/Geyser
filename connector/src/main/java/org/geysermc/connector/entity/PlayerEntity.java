@@ -54,7 +54,6 @@ public class PlayerEntity extends LivingEntity {
     private String username;
     private long lastSkinUpdate = -1;
     private boolean playerList = true;  // Player is in the player list
-    private boolean onGround;
     private final EntityEffectCache effectCache;
 
     private Entity leftParrot;
@@ -123,7 +122,7 @@ public class PlayerEntity extends LivingEntity {
         setPosition(position);
         setRotation(rotation);
 
-        this.onGround = isOnGround;
+        setOnGround(isOnGround);
 
         MovePlayerPacket movePlayerPacket = new MovePlayerPacket();
         movePlayerPacket.setRuntimeEntityId(geyserId);
@@ -150,7 +149,7 @@ public class PlayerEntity extends LivingEntity {
         setRotation(rotation);
         this.position = Vector3f.from(position.getX() + relX, position.getY() + relY, position.getZ() + relZ);
 
-        this.onGround = isOnGround;
+        setOnGround(isOnGround);
 
         MovePlayerPacket movePlayerPacket = new MovePlayerPacket();
         movePlayerPacket.setRuntimeEntityId(geyserId);
@@ -166,6 +165,36 @@ public class PlayerEntity extends LivingEntity {
             rightParrot.moveRelative(session, relX, relY, relZ, rotation, true);
         }
     }
+    
+        @Override
+    public void updateHeadLookRotation(GeyserSession session, float headYaw) {
+        moveRelative(session, 0, 0, 0, Vector3f.from(rotation.getX(), rotation.getY(), headYaw), onGround);
+        MovePlayerPacket movePlayerPacket = new MovePlayerPacket();
+        movePlayerPacket.setRuntimeEntityId(geyserId);
+        movePlayerPacket.setPosition(position);
+        movePlayerPacket.setRotation(getBedrockRotation());
+        movePlayerPacket.setMode(MovePlayerPacket.Mode.ROTATION);
+        session.sendUpstreamPacket(movePlayerPacket);
+    }
+
+    @Override
+    public void updatePositionAndRotation(GeyserSession session, double moveX, double moveY, double moveZ, float yaw, float pitch, boolean isOnGround) {
+        moveRelative(session, moveX, moveY, moveZ, yaw, pitch, isOnGround);
+    }
+
+    @Override
+    public void updateRotation(GeyserSession session, float yaw, float pitch, boolean isOnGround) {
+        super.updateRotation(session, yaw, pitch, isOnGround);
+        // Both packets need to be sent or else player head rotation isn't correctly updated
+        MovePlayerPacket movePlayerPacket = new MovePlayerPacket();
+        movePlayerPacket.setRuntimeEntityId(geyserId);
+        movePlayerPacket.setPosition(position);
+        movePlayerPacket.setRotation(getBedrockRotation());
+        movePlayerPacket.setOnGround(isOnGround);
+        movePlayerPacket.setMode(MovePlayerPacket.Mode.ROTATION);
+        session.sendUpstreamPacket(movePlayerPacket);
+    }
+
 
     @Override
     public void setPosition(Vector3f position) {
@@ -206,7 +235,7 @@ public class PlayerEntity extends LivingEntity {
         }
 
         // Parrot occupying shoulder
-        if (entityMetadata.getId() == 18 || entityMetadata.getId() == 19) {
+        if ((entityMetadata.getId() == 18 && leftParrot == null) || (entityMetadata.getId() == 19 && rightParrot == null)) { // null check since this code just creates the parrot
             CompoundTag tag = (CompoundTag) entityMetadata.getValue();
             if (tag != null && !tag.isEmpty()) {
                 // The parrot is a separate entity in Bedrock, but part of the player entity in Java
